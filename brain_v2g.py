@@ -4,6 +4,35 @@ import torch
 from dotenv import load_dotenv
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer, util
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI()
+
+class ChatRequest(BaseModel):
+    # Změníme query na message, aby to sedělo s tím, co posílá tvůj web
+    message: str 
+
+@app.post("/ask")
+async def ask_endpoint(request: Request): # Změníme ChatRequest na Request
+    try:
+        # Tady si "natvrdo" vytáhneme JSON a podíváme se do něj
+        data = await request.json()
+        print(f"DEBUG: Dorazila data: {data}") # Tohle uvidíš v terminálu!
+
+        # Zkusíme najít text v jakémkoliv běžném klíči
+        user_text = data.get('message') or data.get('query') or data.get('text')
+        
+        if not user_text:
+            return {"error": "Nebyl nalezen žádný text dotazu", "received": data}, 400
+
+        # Voláme tvou funkci
+        answer, sources = ask_gemini(user_text)
+        return {"answer": answer, "sources": sources}
+    except Exception as e:
+        print(f"❌ Chyba v mozku: {e}")
+        return {"error": str(e)}, 500
 
 # 1. Načtení klíčů a konfigurace Google API
 load_dotenv()
@@ -37,8 +66,6 @@ def ask_gemini(query):
     """Pošle dotaz i s kontextem do Google cloudu."""
     context = get_bible_context(query)
     
-    # Nastavení "osobnosti" bota
-    # Používáme gemini-1.5-flash (je rychlý a zdarma)
     model = genai.GenerativeModel(
         model_name="gemini-3.1-flash-lite-preview",
         system_instruction=(
@@ -46,13 +73,17 @@ def ask_gemini(query):
             "Pomáháš s debuggingem víry a analýzou toxické komunikace. "
             "Tvým úkolem je propojovat biblickou moudrost s moderním životem a IT terminologií. "
             "Nepoužíváš slang. Tvůj tón je hluboký, ale srozumitelný. "
+            "Nepřiznávej uživateli, že ti někdo poslal nějaký externí kontext. Ty ty verše znáš, máš je ve své 'databázi moudrosti'. Nikdy neříkej 'v textech, které jsi mi poslal' nebo 'podle tvých veršů'. Místo toho říkej: 'V Písmu se píše...', 'Biblické texty nám ukazují...' nebo 'Když se podíváme do archivu moudrosti...'."
             "\n\nKONTEXT A SCHOPNOSTI:\n"
-            "1. PŘÍBĚHY: Pokud tě Monika požádá o příběh, převyprávěj ho poutavě a srozumitelně, "
+            "1. PŘÍBĚHY: Pokud tě uživatel požádá o příběh, převyprávěj ho poutavě a srozumitelně, "
             "jako bys ho vyprávěl u kafe. Zachovej ale věrnost biblickému poselství.\n"
             "2. ANALÝZA: Hledej v textech 'duchovní malware', 'toxické smyčky' a navrhuj 'firewally' pro vnitřní mír.\n"
             "Pokud to pomůže vysvětlit složitý proces (např. nekonečnou smyčku), "
-            "vytvoř na konci odpovědi Mermaid diagram v bloku ```mermaid."
-        )
+            "vytvoř na konci odpovědi Mermaid diagram v bloku ```mermaid. "
+            "Pravidla pro Mermaid: Nepoužívej diakritiku, texty uzlů dávej do uvozovek, např. A[\"Text\"], "
+            "nepoužívej speciální znaky jako ?, !, čárky nebo tečky. "
+            "V diagramech Mermaid používej jen základní styl graph TD. Texty v uzlech piš bez diakritiky a VŽDY je dávej do uvozovek, např. A[\"Start\"] -> B[\"Cil\"]."
+        ) 
     )
     
     full_prompt = f"""
@@ -68,23 +99,6 @@ def ask_gemini(query):
     return response.text, context
 
 if __name__ == "__main__":
-    print("✨ Gemini je připraven na start! (Ctrl+C pro konec)")
-    while True:
-        try:
-            user_query = input("\n👤 Ty: ")
-            if not user_query.strip():
-                continue
-                
-            print("🚀 Letím pro moudrost do cloudu...")
-            answer, sources = ask_gemini(user_query)
-            
-            print("\n📖 Odpověď:\n" + "-"*40)
-            print(answer)
-            print("-"*40)
-            print(f"\n📚 Verše, které jsem použil jako základ:\n{sources}")
-            
-        except KeyboardInterrupt:
-            print("\n👋 Raketoplán přistává. Hezký den!")
-            break
-        except Exception as e:
-            print(f"❌ Ups, v systému je chyba: {e}")
+    print("🚀 Most pro BIBLEbota se staví na portu 5005...")
+    # host="0.0.0.0" zajistí, že na to uvidí i Docker
+    uvicorn.run(app, host="0.0.0.0", port=5005)
